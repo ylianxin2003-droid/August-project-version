@@ -190,7 +190,7 @@ def _write_frame(root: Path, stem: str, frame: pd.DataFrame) -> str:
 
 
 def _cache_safe_summary(summary: pd.DataFrame) -> pd.DataFrame:
-    """Remove non-official spatial forecast fallbacks from packaged evidence."""
+    """Remove non-official spatial forecast values from packaged evidence."""
     safe = summary.copy() if isinstance(summary, pd.DataFrame) else pd.DataFrame()
     if safe.empty or "Indicator" not in safe.columns:
         return safe

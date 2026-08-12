@@ -605,6 +605,58 @@ class ApiOnlyDataLoaderTest(unittest.TestCase):
         self.assertTrue(any("forecast 90 unavailable" in item for item in bundle.status.warnings))
         self.assertTrue(any("forecast 180 unavailable" in item for item in bundle.status.warnings))
 
+    def test_forecast_decode_failure_stays_unavailable_in_summary_and_map(self):
+        import data_loader
+        from icao_risk import build_categorical_cells, build_icao_summary
+
+        class DecodeFailingClient(FakeRawClient):
+            def download_aida_forecast(self, requested_time, latency, period_minutes):
+                self.forecast_requests = getattr(self, "forecast_requests", [])
+                self.forecast_requests.append(
+                    (requested_time, latency, period_minutes)
+                )
+                return True, f"forecast {period_minutes}", f"forecast-{period_minutes}".encode()
+
+        def decode(payload, region, step, variables):
+            if payload == b"forecast-90":
+                raise data_loader.AidaGridError("controlled forecast decode failure")
+            return _fake_calculation(payload, region, step, variables)
+
+        client = DecodeFailingClient()
+        with (
+            patch.object(data_loader, "SereneClient", return_value=client),
+            patch.object(data_loader, "calculate_aida_grid", side_effect=decode),
+        ):
+            bundle = data_loader.load_icao_products(
+                analysis_time="2026-06-21T20:00:00Z",
+                variables=["TEC"],
+                region=GLOBAL_REGION,
+                grid_step=30,
+                include_three_hour_window=False,
+                include_psd_baseline=False,
+            )
+
+        summary = build_icao_summary(
+            bundle.products,
+            bundle.indices,
+            eligible=bundle.kp_storm_eligible,
+            kp_horizons=bundle.kp_horizons,
+        )
+        tec = summary.loc[summary["Indicator"] == "Vertical TEC"].iloc[0]
+
+        self.assertNotIn("forecast_90", set(bundle.products["product_kind"]))
+        self.assertIsNone(tec["+90 min forecast"])
+        self.assertEqual(tec["+90 min status"], "UNAVAILABLE")
+        self.assertEqual(tec["+90 min source"], "Unavailable")
+        self.assertTrue(
+            build_categorical_cells(
+                bundle.products, "Vertical TEC", "+90 min"
+            ).empty
+        )
+        audit = bundle.status.metadata["forecast_request_audit"]
+        plus90 = next(row for row in audit if row["forecast_parameter"] == 90)
+        self.assertEqual(plus90["outcome"], "decode_failed")
+
     def test_psd_reference_tolerates_two_missing_daily_states(self):
         import data_loader
 

@@ -9,6 +9,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
 class IcaoAppHelpersTest(unittest.TestCase):
+    def test_forecast_audit_never_surfaces_dashboard_generated_provenance(self):
+        from app import _forecast_audit_source
+
+        generated = pd.DataFrame([{
+            "+30 min source": "Dashboard-generated persistence forecast",
+        }])
+        official = pd.DataFrame([{
+            "+30 min source": "SERENE official forecast",
+        }])
+
+        self.assertEqual(
+            _forecast_audit_source(generated, "+30 min source"), "Unavailable"
+        )
+        self.assertEqual(
+            _forecast_audit_source(official, "+30 min source"),
+            "SERENE official forecast",
+        )
+
     def test_forecast_helpers_restore_all_four_horizons(self):
         from app import (
             _available_primary_periods,

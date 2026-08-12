@@ -1375,10 +1375,6 @@ def _forecast_audit_source(summary: pd.DataFrame, source_column: str) -> str:
     ]
     if any(value == "SERENE official forecast" for value in sources):
         return "SERENE official forecast"
-    if any(value == "Dashboard-generated trend-based forecast" for value in sources):
-        return "Dashboard-generated trend-based forecast"
-    if any(value == "Dashboard-generated persistence forecast" for value in sources):
-        return "Dashboard-generated persistence forecast"
     return "Unavailable"
 
 

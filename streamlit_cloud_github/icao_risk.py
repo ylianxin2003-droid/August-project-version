@@ -159,6 +159,13 @@ def build_categorical_cells(
     work = _rows_for_indicator_horizon(frame, canonical_indicator, canonical_horizon)
     if work.empty:
         return empty
+    if canonical_horizon in FORECAST_HORIZONS:
+        forecast_values = work.apply(
+            lambda row: _indicator_value(row, canonical_indicator), axis=1
+        )
+        work = work[forecast_values.notna()].copy()
+        if work.empty:
+            return empty
     if canonical_horizon == "Latest" and "time" in work.columns:
         parsed_time = pd.to_datetime(work["time"], errors="coerce", utc=True)
         if parsed_time.notna().any():
@@ -344,7 +351,7 @@ def _spatial_summary_row(frame, domain, indicator, eligible):
         ),
     }
     for horizon, value in forecast_values.items():
-        summary[f"{horizon} forecast"] = _na(value)
+        summary[f"{horizon} forecast"] = value
         summary[f"{horizon} status"] = forecast_statuses[horizon]
         summary[f"{horizon} source"] = _row_forecast_source(values[horizon])
     return summary
@@ -488,7 +495,7 @@ def _regional_max(frame, indicator, horizon):
 
 
 def _rows_for_indicator_horizon(frame, indicator, horizon):
-    """Return official rows when present, otherwise generated prediction rows."""
+    """Return rows for a horizon, requiring official SERENE forecast provenance."""
     if frame.empty or not {"indicator", "horizon"}.issubset(frame.columns):
         return pd.DataFrame()
     canonical_horizon = _canonical_horizon(horizon)
@@ -496,84 +503,39 @@ def _rows_for_indicator_horizon(frame, indicator, horizon):
         (frame["indicator"].map(_canonical_indicator) == indicator)
         & (frame["horizon"].map(_canonical_horizon) == canonical_horizon)
     ].copy()
-    if not work.empty:
-        if canonical_horizon in FORECAST_HORIZONS:
-            work["forecast_source"] = "SERENE official forecast"
+    if canonical_horizon not in FORECAST_HORIZONS:
         return work
-    if canonical_horizon in FORECAST_HORIZONS:
-        return _fallback_prediction_rows(frame, indicator, canonical_horizon)
+    if work.empty or not {"product_kind", "source"}.issubset(work.columns):
+        return pd.DataFrame()
+
+    expected_kind = f"forecast_{FORECAST_HORIZONS[canonical_horizon]}"
+    official = (
+        work["product_kind"].astype(str).str.strip().str.casefold()
+        == expected_kind
+    ) & (
+        work["source"].map(_is_official_serene_forecast_source)
+    )
+    if "forecast_source" in work.columns:
+        declared = work["forecast_source"]
+        official &= declared.isna() | (
+            declared.astype(str).str.strip() == "SERENE official forecast"
+        )
+    work = work[official].copy()
+    if work.empty:
+        return work
+    work["forecast_source"] = "SERENE official forecast"
     return work
 
 
-def _fallback_prediction_rows(frame, indicator, horizon):
-    if frame.empty or not {"indicator", "horizon", "lat", "lon"}.issubset(frame.columns):
-        return pd.DataFrame()
-    hours = FORECAST_HORIZONS[horizon] / 60.0
-    work = frame[
-        (frame["indicator"].map(_canonical_indicator) == indicator)
-        & (frame["horizon"].map(_canonical_horizon).isin(["Latest", "Max3h"]))
-    ].copy()
-    if "product_kind" in work.columns:
-        work = work[work["product_kind"].astype(str).str.casefold() != "baseline"]
-    if work.empty:
-        return pd.DataFrame()
-    work["lat"] = pd.to_numeric(work["lat"], errors="coerce")
-    work["lon"] = pd.to_numeric(work["lon"], errors="coerce")
-    work["_risk_value"] = work.apply(
-        lambda row: _indicator_value(row, indicator), axis=1
+def _is_official_serene_forecast_source(value):
+    if value is None or pd.isna(value):
+        return False
+    source = str(value).strip().casefold()
+    return (
+        source == "serene official forecast"
+        or source == "serene aida forecast"
+        or source.startswith("serene raw api + breid-phys/aida-ionosphere ")
     )
-    work["_risk_value"] = pd.to_numeric(work["_risk_value"], errors="coerce")
-    if "time" in work.columns:
-        work["_parsed_time"] = pd.to_datetime(work["time"], errors="coerce", utc=True)
-    else:
-        work["_parsed_time"] = pd.NaT
-    work = work.dropna(subset=["lat", "lon", "_risk_value"])
-    if work.empty:
-        return pd.DataFrame()
-
-    rows = []
-    for _, group in work.groupby(["lat", "lon"], sort=False):
-        if group["_parsed_time"].notna().any():
-            latest_time = group["_parsed_time"].max()
-            latest_candidates = group[group["_parsed_time"] == latest_time]
-            latest = latest_candidates.iloc[-1].copy()
-            window_start = latest_time - pd.Timedelta(hours=3)
-            window = group[
-                group["_parsed_time"].between(window_start, latest_time, inclusive="both")
-            ].copy()
-            earlier = window[window["_parsed_time"] < latest_time]
-            if not earlier.empty:
-                earliest = earlier.sort_values("_parsed_time").iloc[0]
-                trend_per_hour = (
-                    float(latest["_risk_value"]) - float(earliest["_risk_value"])
-                ) / 3.0
-                predicted = float(latest["_risk_value"]) + trend_per_hour * hours
-                forecast_source = "Dashboard-generated trend-based forecast"
-            else:
-                predicted = float(latest["_risk_value"])
-                forecast_source = "Dashboard-generated persistence forecast"
-            latest["time"] = latest_time + pd.Timedelta(hours=hours)
-        else:
-            latest = group.iloc[-1].copy()
-            predicted = float(latest["_risk_value"])
-            forecast_source = "Dashboard-generated persistence forecast"
-
-        latest["horizon"] = horizon
-        latest["forecast_source"] = forecast_source
-        latest["product_kind"] = (
-            f"fallback_trend_{int(hours * 60)}"
-            if "trend-based" in forecast_source
-            else f"fallback_persistence_{int(hours * 60)}"
-        )
-        latest["source"] = (
-            f"{forecast_source} from SERENE analysis"
-        )
-        if indicator == "Post-Storm Depression":
-            latest["psd_percent"] = predicted
-        else:
-            latest["value"] = predicted
-        rows.append(latest.drop(labels=["_risk_value", "_parsed_time"], errors="ignore"))
-    return pd.DataFrame(rows)
 
 
 def _indicator_value(row, indicator):

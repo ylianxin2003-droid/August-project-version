@@ -509,12 +509,16 @@ from icao_risk import build_icao_summary
 products = pd.DataFrame([
     {
         "indicator": "Vertical TEC", "horizon": horizon,
+        "product_kind": product_kind,
         "lat": 50.0, "lon": 0.0, "value": value,
         "time": "2026-08-12T13:00:00Z", "source": "SERENE official forecast",
     }
-    for horizon, value in [
-        ("Latest", 10.0), ("+30 min", 20.0), ("+90 min", 30.0),
-        ("+3h", 40.0), ("+6h", 50.0),
+    for horizon, product_kind, value in [
+        ("Latest", "analysis", 10.0),
+        ("+30 min", "forecast_30", 20.0),
+        ("+90 min", "forecast_90", 30.0),
+        ("+3h", "forecast_180", 40.0),
+        ("+6h", "forecast_360", 50.0),
     ]
 ])
 kp_horizons = pd.DataFrame([

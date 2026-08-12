@@ -61,7 +61,7 @@ class IcaoRiskTest(unittest.TestCase):
 
         products = pd.DataFrame([
             {"indicator": "Vertical TEC", "horizon": "Latest", "time": "2026-06-24T12:00:00Z", "lat": 50, "lon": 1, "value": 180},
-            {"indicator": "Vertical TEC", "horizon": "+30 min", "time": "2026-06-24T12:30:00Z", "lat": 51, "lon": 2, "value": 130},
+            {"indicator": "Vertical TEC", "horizon": "+30 min", "product_kind": "forecast_30", "time": "2026-06-24T12:30:00Z", "lat": 51, "lon": 2, "value": 130, "source": "SERENE AIDA forecast"},
             {"indicator": "Kp", "horizon": "Latest", "time": "2026-06-24T12:00:00Z", "lat": 50, "lon": 1, "value": 9},
         ])
 
@@ -165,9 +165,11 @@ class IcaoRiskTest(unittest.TestCase):
             products = pd.DataFrame([{
                 "indicator": "Vertical TEC",
                 "horizon": raw_horizon,
+                "product_kind": f"forecast_{180 if canonical_horizon == '+3h' else 360}",
                 "lat": 50,
                 "lon": 1,
                 "value": value,
+                "source": "SERENE AIDA forecast",
             }])
 
             cells = build_categorical_cells(
@@ -177,8 +179,8 @@ class IcaoRiskTest(unittest.TestCase):
             self.assertEqual(len(cells), 1)
             self.assertEqual(cells.iloc[0]["horizon"], canonical_horizon)
 
-    def test_new_horizons_keep_official_fallback_and_missing_evidence_independent(self):
-        from icao_risk import build_icao_summary
+    def test_new_horizons_keep_official_and_missing_evidence_independent(self):
+        from icao_risk import build_categorical_cells, build_icao_summary
 
         products = pd.DataFrame([
             {
@@ -215,10 +217,11 @@ class IcaoRiskTest(unittest.TestCase):
 
         self.assertEqual(tec["+3h forecast"], 160.0)
         self.assertEqual(tec["+3h source"], "SERENE official forecast")
-        self.assertEqual(tec["+6h forecast"], 130.0)
-        self.assertEqual(tec["+6h status"], "MODERATE")
-        self.assertEqual(
-            tec["+6h source"], "Dashboard-generated persistence forecast"
+        self.assertIsNone(tec["+6h forecast"])
+        self.assertEqual(tec["+6h status"], "UNAVAILABLE")
+        self.assertEqual(tec["+6h source"], "Unavailable")
+        self.assertTrue(
+            build_categorical_cells(products, "Vertical TEC", "+6h").empty
         )
         self.assertEqual(kp["+3h forecast"], 8.2)
         self.assertEqual(kp["+3h status"], "MODERATE")
@@ -230,7 +233,7 @@ class IcaoRiskTest(unittest.TestCase):
         from icao_risk import build_categorical_cells
 
         products = pd.DataFrame([
-            {"indicator": "Post-Storm Depression", "horizon": "+30 min", "lat": 50, "lon": 1, "reference": 100, "current": 40},
+            {"indicator": "Post-Storm Depression", "horizon": "+30 min", "product_kind": "forecast_30", "lat": 50, "lon": 1, "reference": 100, "current": 40, "source": "SERENE AIDA forecast"},
         ])
 
         gated = build_categorical_cells(products, "Post-Storm Depression", "+30 min")
@@ -275,7 +278,7 @@ class IcaoRiskTest(unittest.TestCase):
 
         products = pd.DataFrame([
             {"variable": "TEC", "product_kind": "analysis", "time": "2026-06-24T12:00:00Z", "lat": 50, "lon": 1, "value": 130},
-            {"variable": "TEC", "product_kind": "forecast_30", "time": "2026-06-24T12:30:00Z", "lat": 50, "lon": 1, "value": 150},
+            {"variable": "TEC", "product_kind": "forecast_30", "time": "2026-06-24T12:30:00Z", "lat": 50, "lon": 1, "value": 150, "source": "SERENE AIDA forecast"},
         ])
 
         latest = build_categorical_cells(products, "Vertical TEC", "Latest")
@@ -294,7 +297,7 @@ class IcaoRiskTest(unittest.TestCase):
             {"indicator": "Vertical TEC", "horizon": "Latest", "time": "2026-06-24T12:00:00Z", "lat": 50, "lon": 1, "value": 120},
             {"indicator": "Vertical TEC", "horizon": "Latest", "time": "2026-06-24T12:00:00Z", "lat": 51, "lon": 2, "value": 180},
             {"indicator": "Vertical TEC", "horizon": "Max3h", "lat": 50, "lon": 1, "value": 160},
-            {"indicator": "Vertical TEC", "horizon": "+30 min", "lat": 50, "lon": 1, "value": 130},
+            {"indicator": "Vertical TEC", "horizon": "+30 min", "product_kind": "forecast_30", "lat": 50, "lon": 1, "value": 130, "source": "SERENE AIDA forecast"},
         ])
         indices = pd.DataFrame([
             {"variable": "Kp", "time": "2026-06-24T12:00:00Z", "value": 8.5},
@@ -312,7 +315,7 @@ class IcaoRiskTest(unittest.TestCase):
         self.assertEqual(tec["+30 min forecast"], 130)
         self.assertEqual(tec["+30 min status"], "MODERATE")
         self.assertEqual(tec["+30 min source"], "SERENE official forecast")
-        self.assertEqual(tec["+90 min source"], "Dashboard-generated persistence forecast")
+        self.assertEqual(tec["+90 min source"], "Unavailable")
         self.assertEqual(kp["Latest value"], 8.5)
         self.assertEqual(kp["Status"], "MODERATE")
         self.assertEqual(kp["Max-3h value"], 8.5)
@@ -453,7 +456,7 @@ class IcaoRiskTest(unittest.TestCase):
         self.assertEqual(tec["Max-3h value"], 180)
         self.assertEqual(tec["+30 min forecast"], 150)
         self.assertEqual(tec["+30 min source"], "SERENE official forecast")
-        self.assertEqual(tec["+90 min source"], "Dashboard-generated trend-based forecast")
+        self.assertEqual(tec["+90 min source"], "Unavailable")
 
     def test_missing_psd_baseline_never_treats_muf_mhz_as_percent(self):
         from icao_risk import build_categorical_cells, build_icao_summary
@@ -563,10 +566,10 @@ class IcaoRiskTest(unittest.TestCase):
         self.assertEqual(kp["+90 min source"], "Unavailable")
         self.assertEqual(kp["+30 min source"], "Unavailable")
 
-    def test_summary_uses_trend_prediction_when_official_forecasts_missing(self):
+    def test_spatial_forecast_matrix_is_official_or_unavailable(self):
         from icao_risk import build_categorical_cells, build_icao_summary
 
-        products = pd.DataFrame([
+        observations = pd.DataFrame([
             {
                 "variable": "TEC",
                 "product_kind": "rolling",
@@ -585,60 +588,6 @@ class IcaoRiskTest(unittest.TestCase):
                 "value": 130,
                 "source": "SERENE AIDA analysis",
             },
-        ])
-
-        summary = build_icao_summary(products, pd.DataFrame(), eligible=False)
-        tec = summary.loc[summary["Indicator"] == "Vertical TEC"].iloc[0]
-        plus30 = build_categorical_cells(products, "Vertical TEC", "+30 min")
-        plus90 = build_categorical_cells(products, "Vertical TEC", "+90 min")
-
-        self.assertEqual(tec["+30 min forecast"], 135.0)
-        self.assertEqual(tec["+30 min status"], "MODERATE")
-        self.assertEqual(tec["+90 min forecast"], 145.0)
-        self.assertEqual(tec["+90 min status"], "MODERATE")
-        self.assertEqual(tec["+30 min source"], "Dashboard-generated trend-based forecast")
-        self.assertEqual(tec["+90 min source"], "Dashboard-generated trend-based forecast")
-        self.assertEqual(plus30.iloc[0]["display_value"], 135.0)
-        self.assertEqual(plus90.iloc[0]["display_value"], 145.0)
-        self.assertEqual(
-            plus30.iloc[0]["product_state"],
-            "dashboard-generated trend-based forecast",
-        )
-
-    def test_summary_uses_persistence_prediction_without_three_hour_window(self):
-        from icao_risk import build_categorical_cells, build_icao_summary
-
-        products = pd.DataFrame([
-            {
-                "variable": "TEC",
-                "product_kind": "analysis",
-                "time": "2026-06-24T12:00:00Z",
-                "lat": 50,
-                "lon": 1,
-                "value": 130,
-                "source": "SERENE AIDA analysis",
-            },
-        ])
-
-        summary = build_icao_summary(products, pd.DataFrame(), eligible=False)
-        tec = summary.loc[summary["Indicator"] == "Vertical TEC"].iloc[0]
-        plus30 = build_categorical_cells(products, "Vertical TEC", "+30 min")
-
-        self.assertEqual(tec["+30 min forecast"], 130.0)
-        self.assertEqual(tec["+90 min forecast"], 130.0)
-        self.assertEqual(tec["+30 min status"], "MODERATE")
-        self.assertEqual(tec["+30 min source"], "Dashboard-generated persistence forecast")
-        self.assertEqual(tec["+90 min source"], "Dashboard-generated persistence forecast")
-        self.assertEqual(plus30.iloc[0]["display_value"], 130.0)
-        self.assertEqual(
-            plus30.iloc[0]["product_state"],
-            "dashboard-generated persistence forecast",
-        )
-
-    def test_psd_prediction_fallback_keeps_kp_gate(self):
-        from icao_risk import build_categorical_cells, build_icao_summary
-
-        products = pd.DataFrame([
             {
                 "variable": "MUF3000F2",
                 "product_kind": "rolling",
@@ -660,21 +609,171 @@ class IcaoRiskTest(unittest.TestCase):
                 "source": "SERENE AIDA analysis",
             },
         ])
+        horizon_cases = (
+            ("+30 min", 30, 130.0, 35.0),
+            ("+90 min", 90, 140.0, 40.0),
+            ("+3h", 180, 160.0, 45.0),
+            ("+6h", 360, 180.0, 55.0),
+        )
+        forecast_rows = []
+        for label, minutes, tec_value, psd_value in horizon_cases:
+            forecast_rows.extend([
+                {
+                    "variable": "TEC",
+                    "product_kind": f"forecast_{minutes}",
+                    "time": "2026-06-24T12:30:00Z",
+                    "lat": 50,
+                    "lon": 1,
+                    "value": tec_value,
+                    "source": "SERENE AIDA forecast",
+                },
+                {
+                    "variable": "MUF3000F2",
+                    "product_kind": f"forecast_{minutes}",
+                    "time": "2026-06-24T12:30:00Z",
+                    "lat": 50,
+                    "lon": 1,
+                    "value": 8,
+                    "psd_percent": psd_value,
+                    "source": "SERENE AIDA forecast",
+                },
+            ])
+
+        official_products = pd.concat(
+            [observations, pd.DataFrame(forecast_rows)], ignore_index=True
+        )
+        official_summary = build_icao_summary(
+            official_products, pd.DataFrame(), eligible=True
+        )
+        missing_summary = build_icao_summary(
+            observations, pd.DataFrame(), eligible=True
+        )
+
+        for indicator, expected_values in (
+            ("Vertical TEC", [130.0, 140.0, 160.0, 180.0]),
+            ("Post-Storm Depression", [35.0, 40.0, 45.0, 55.0]),
+        ):
+            official_row = official_summary.loc[
+                official_summary["Indicator"] == indicator
+            ].iloc[0]
+            missing_row = missing_summary.loc[
+                missing_summary["Indicator"] == indicator
+            ].iloc[0]
+            for (label, _minutes, _tec, _psd), expected in zip(
+                horizon_cases, expected_values
+            ):
+                with self.subTest(indicator=indicator, horizon=label, state="official"):
+                    self.assertEqual(official_row[f"{label} forecast"], expected)
+                    self.assertEqual(
+                        official_row[f"{label} source"], "SERENE official forecast"
+                    )
+                    self.assertFalse(
+                        build_categorical_cells(
+                            official_products,
+                            indicator,
+                            label,
+                            kp_storm_eligible=True,
+                        ).empty
+                    )
+                with self.subTest(indicator=indicator, horizon=label, state="missing"):
+                    self.assertIsNone(missing_row[f"{label} forecast"])
+                    self.assertEqual(missing_row[f"{label} status"], "UNAVAILABLE")
+                    self.assertEqual(missing_row[f"{label} source"], "Unavailable")
+                    self.assertTrue(
+                        build_categorical_cells(
+                            observations,
+                            indicator,
+                            label,
+                            kp_storm_eligible=True,
+                        ).empty
+                    )
+
+    def test_spatial_forecasts_reject_non_official_or_mismatched_provenance(self):
+        from icao_risk import build_categorical_cells, build_icao_summary
+
+        invalid_products = pd.DataFrame([
+            {
+                "indicator": "Vertical TEC",
+                "horizon": "+30 min",
+                "product_kind": "analysis",
+                "lat": 50,
+                "lon": 1,
+                "value": 180.0,
+                "source": "SERENE AIDA analysis",
+            },
+            {
+                "indicator": "Post-Storm Depression",
+                "horizon": "+90 min",
+                "product_kind": "forecast_90",
+                "lat": 50,
+                "lon": 1,
+                "psd_percent": 55.0,
+                "source": "Dashboard-generated persistence forecast",
+            },
+            {
+                "indicator": "Vertical TEC",
+                "horizon": "+3h",
+                "product_kind": "forecast_180",
+                "lat": 50,
+                "lon": 1,
+                "value": 180.0,
+                "source": "SERENE-looking synthetic forecast",
+            },
+        ])
+
+        summary = build_icao_summary(
+            invalid_products, pd.DataFrame(), eligible=True
+        )
+
+        for indicator, horizon in (
+            ("Vertical TEC", "+30 min"),
+            ("Post-Storm Depression", "+90 min"),
+            ("Vertical TEC", "+3h"),
+        ):
+            row = summary.loc[summary["Indicator"] == indicator].iloc[0]
+            self.assertIsNone(row[f"{horizon} forecast"])
+            self.assertEqual(row[f"{horizon} status"], "UNAVAILABLE")
+            self.assertEqual(row[f"{horizon} source"], "Unavailable")
+            self.assertTrue(
+                build_categorical_cells(
+                    invalid_products,
+                    indicator,
+                    horizon,
+                    kp_storm_eligible=True,
+                ).empty
+            )
+
+    def test_official_psd_forecast_without_baseline_is_unavailable_and_map_empty(self):
+        from icao_risk import build_categorical_cells, build_icao_summary
+
+        products = pd.DataFrame([{
+            "variable": "MUF3000F2",
+            "product_kind": "forecast_360",
+            "time": "2026-06-24T18:00:00Z",
+            "lat": 50,
+            "lon": 1,
+            "value": 8.0,
+            "reference_value": pd.NA,
+            "psd_percent": pd.NA,
+            "source": "SERENE AIDA forecast",
+        }])
 
         summary = build_icao_summary(products, pd.DataFrame(), eligible=True)
-        psd = summary.loc[summary["Indicator"] == "Post-Storm Depression"].iloc[0]
-        gated_off = build_categorical_cells(
-            products, "Post-Storm Depression", "+30 min", kp_storm_eligible=False
-        )
-        gated_on = build_categorical_cells(
-            products, "Post-Storm Depression", "+30 min", kp_storm_eligible=True
-        )
+        psd = summary.loc[
+            summary["Indicator"] == "Post-Storm Depression"
+        ].iloc[0]
 
-        self.assertEqual(psd["+30 min forecast"], 37.5)
-        self.assertEqual(psd["+30 min status"], "MODERATE")
-        self.assertEqual(psd["+30 min source"], "Dashboard-generated trend-based forecast")
-        self.assertEqual(gated_off.iloc[0]["category"], "OK")
-        self.assertEqual(gated_on.iloc[0]["category"], "MODERATE")
+        self.assertIsNone(psd["+6h forecast"])
+        self.assertEqual(psd["+6h status"], "UNAVAILABLE")
+        self.assertEqual(psd["+6h source"], "Unavailable")
+        self.assertTrue(
+            build_categorical_cells(
+                products,
+                "Post-Storm Depression",
+                "+6h",
+                kp_storm_eligible=True,
+            ).empty
+        )
 
     def test_overall_risk_cards_use_worst_available_status(self):
         from icao_risk import build_overall_risk_cards

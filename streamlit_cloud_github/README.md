@@ -378,5 +378,5 @@ for browser observations and the required live deployment acceptance test.
 - No direct radiation dose product
 - No S4 / sigma-phi scintillation input from SERENE-only data
 - No direct PCA / SWF product from SERENE-only data
-- Forecasts may be official SERENE forecasts or clearly labelled
-  dashboard-generated fallback predictions
+- Decision-facing TEC and PSD forecasts and maps use only the corresponding
+  official SERENE forecast product; missing or invalid evidence is unavailable
